@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "lifecycle_insights"
 sys.path.insert(0, str(SCRIPTS))
 import analyze_sandbox_reuse as a  # noqa: E402

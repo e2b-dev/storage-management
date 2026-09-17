@@ -20,7 +20,7 @@ from pathlib import Path
 from e2b import Sandbox, SandboxState
 from e2b.exceptions import NotFoundException
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PYTHON_SCRIPT = [sys.executable, str(ROOT / "cleanup" / "cleanup_paused_sandboxes.py")]
 SHELL_SCRIPT = [str(ROOT / "cleanup" / "cleanup_paused_sandboxes_cli.sh")]
 MIN_OLD_AGE_S = 60  # how long the "old" sandbox runs before being paused

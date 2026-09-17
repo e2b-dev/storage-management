@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lifecycle_insights"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lifecycle_insights"))
 
 import analyze_sandbox_reuse as a  # noqa: E402
 

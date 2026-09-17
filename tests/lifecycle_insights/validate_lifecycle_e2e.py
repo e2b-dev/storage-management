@@ -19,7 +19,7 @@ from pathlib import Path
 
 from e2b import Sandbox
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "lifecycle_insights"
 WAIT_S = 75
 sys.path.insert(0, str(SCRIPTS))

@@ -16,7 +16,7 @@ Supporting folders:
 
 | Folder | Contents |
 |---|---|
-| [`tests/`](tests/) | Offline unit tests (`test_*.py`, no account access) and live harnesses (`validate_*.py`, create and clean up tagged sandboxes). |
+| [`tests/`](tests/) | Mirrors the tool folders: `tests/lifecycle_insights/`, `tests/cleanup/`. Offline unit tests (`test_*.py`, no account access) and live harnesses (`validate_*.py`, create and clean up tagged sandboxes). |
 | [`docs/`](docs/) | [`VERIFICATION.md`](docs/VERIFICATION.md): what was verified, how, and known limits. [`implementation-plan.md`](docs/implementation-plan.md): design notes. |
 
 ## Setup
@@ -46,8 +46,8 @@ Verified with E2B SDK 2.50.0 and E2B CLI 2.17.1.
 ```bash
 .venv/bin/python -m unittest discover -s tests      # offline, no account calls
 shellcheck lifecycle_insights/*.sh cleanup/*.sh
-.venv/bin/python tests/validate_lifecycle_e2e.py    # live: one tagged sandbox, ~2 min
-.venv/bin/python tests/validate_e2e.py              # live: cleanup fixtures and a named snapshot
+.venv/bin/python tests/lifecycle_insights/validate_lifecycle_e2e.py   # live: one tagged sandbox, ~2 min
+.venv/bin/python tests/cleanup/validate_e2e.py                        # live: cleanup fixtures and a named snapshot
 ```
 
 Live harnesses write evidence under `verification/`, which is gitignored because it contains
@@ -64,7 +64,7 @@ rm -rf /tmp/lifecycle_insights && mkdir /tmp/lifecycle_insights \
   && (cd /tmp && zip -r "$OLDPWD/sandbox_lifecycle_insights.zip" lifecycle_insights -x '*.DS_Store')
 ```
 
-`tests/validate_customer_package_e2e.py` builds and checks that package end to end against
+`tests/lifecycle_insights/validate_customer_package_e2e.py` builds and checks that package end to end against
 a live tagged sandbox (set `LIFECYCLE_ZIP` to test a prebuilt zip instead).
 
 ## Adding a tool
@@ -76,6 +76,7 @@ a live tagged sandbox (set `LIFECYCLE_ZIP` to test a prebuilt zip instead).
    `cleanup/` does, or a full parallel implementation with a parity test, as
    `lifecycle_insights/` does.
 3. Default to read-only or dry run. Anything that deletes must require an explicit flag.
-4. Add offline tests under `tests/test_<tool>.py` and, if it touches the account, a
-   `tests/validate_<tool>_e2e.py` that creates only tagged fixtures and cleans them up.
+4. Add a matching `tests/<tool>/` folder with an empty `__init__.py`, offline `test_*.py` files,
+   and, if it touches the account, a `validate_*_e2e.py` that creates only tagged fixtures and
+   cleans them up.
 5. Add a row to the Tools table above.

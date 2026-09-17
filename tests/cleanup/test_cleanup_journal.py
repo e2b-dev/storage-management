@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cleanup"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cleanup"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test helpers
 from cleanup_journal import Journal
 from test_cleanup_safety import Backend, sandbox, run_python
 

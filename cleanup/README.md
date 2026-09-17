@@ -74,5 +74,5 @@ created after enumeration, and previously orphaned snapshots, are not discovered
 | `sandbox_backend.py` | Normalises SDK and CLI responses into one shape. |
 | `cleanup_journal.py` | Locked, atomic journal for snapshot recovery. |
 
-Tests: `tests/test_cleanup_safety.py`, `tests/test_cleanup_journal.py` (offline) and
-`tests/validate_e2e.py` (live, creates tagged fixtures). See the root README.
+Tests: `tests/cleanup/test_cleanup_safety.py`, `tests/cleanup/test_cleanup_journal.py` (offline)
+and `tests/cleanup/validate_e2e.py` (live, creates tagged fixtures). See the root README.

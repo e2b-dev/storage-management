@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from datetime import datetime, timedelta, timezone
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "lifecycle_insights"))
 import analyze_sandbox_reuse as reuse
 

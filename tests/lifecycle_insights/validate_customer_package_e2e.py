@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from e2b import Sandbox, NotFoundException
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RUN = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:6]
 EVIDENCE = ROOT / 'verification' / 'live-customer-package' / RUN  # gitignored: contains account data
 WINDOWS = '0.0006944444444444445,0.006944444444444444'
