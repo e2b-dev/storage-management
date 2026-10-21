@@ -8,3 +8,6 @@ events*.json
 .cleanup-journal-*.json
 .cleanup-journal-*.lock
 verification/
+docs/VERIFICATION.md
+.env
+.env.*

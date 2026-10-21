@@ -4,6 +4,20 @@
 # Requires: curl, jq, E2B_API_KEY, and the `e2b` CLI for the current paused listing.
 
 set -euo pipefail
+umask 077
+
+private_copy() {
+  local source="$1" destination="$2" temporary
+  if [[ -d "$destination" ]]; then
+    echo "Export destination is a directory: $destination" >&2
+    return 1
+  fi
+  temporary="$(mktemp "$(dirname -- "$destination")/.sandbox-export-XXXXXXXX")" || return 1
+  if ! cat -- "$source" >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
 
 windows="1,2,3,7"
 since_days="7"
@@ -25,6 +39,7 @@ Usage: $0 [--windows 12h,1,2,3,7] [--since-days N] [--max-events N] [--all]
 Defaults: last 7 days and at most the newest 10000 events. --all removes both limits
 (same as --since-days 0 --max-events 0). Plain window numbers are days; h/d suffixes allowed.
 Read-only analysis of observed sandbox returns and pause/resume timing.
+Exports apply history limits and metadata filters; JSON and CSV files are private (0600).
 USAGE
   exit 2
 }
@@ -121,21 +136,22 @@ else
   done
   jq -s 'unique_by(.id)' "$workdir/pages.jsonl" >"$events_json"
 fi
-if [[ -n "$save_events" ]]; then
-  cp "$events_json" "$save_events"
-fi
-
 # Apply the same limits regardless of source: newest first, drop older than since, then cap.
-jq --argjson since "$since_epoch" --argjson max "$max_events" '
+jq --argjson since "$since_epoch" --argjson max "$max_events" --argjson meta "$meta_json" '
   def epoch: capture("^(?<b>[^.Z]+)(\\.(?<f>[0-9]+))?Z$")
     | (.b + "Z" | fromdateiso8601) + (("0." + (.f // "0")) | tonumber);
   unique_by(.id) | map(select(.type | IN("sandbox.lifecycle.created", "sandbox.lifecycle.paused", "sandbox.lifecycle.resumed", "sandbox.lifecycle.killed")))
   | sort_by(.timestamp) | reverse
   | if $since == null then . else map(select((.timestamp | epoch) >= $since)) end
   | {cap_reached: ($max > 0 and length >= $max), events: (if $max > 0 then .[:$max] else . end)}
+  | .events |= map(select((.eventData.sandbox_metadata // {}) as $m
+      | all($meta | to_entries[]; $m[.key] == .value)))
 ' "$events_json" >"$workdir/limited.json"
 cap_reached="$(jq -r '.cap_reached' "$workdir/limited.json")"
 jq '.events' "$workdir/limited.json" >"$events_json"
+if [[ -n "$save_events" ]]; then
+  private_copy "$events_json" "$save_events"
+fi
 events_used="$(jq 'length' "$events_json")"
 oldest_used="$(jq -r 'if length == 0 then "" else .[-1].timestamp end' "$events_json")"
 
@@ -396,6 +412,7 @@ if [[ -n "$csv_path" ]]; then
           ($cur.startedAt // ""), ($cur.endAt // ""),
           (if (.metadata | length) > 0 then (.metadata | tojson) else "" end), ($excluded[$sid] // 0) ]
       | @csv' <<<"$summary"
-  } >"$csv_path"
+  } >"$workdir/export.csv"
+  private_copy "$workdir/export.csv" "$csv_path"
   echo "Per-sandbox detail written to $csv_path"
 fi

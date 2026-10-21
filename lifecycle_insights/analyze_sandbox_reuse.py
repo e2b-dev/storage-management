@@ -20,9 +20,11 @@ import json
 import math
 import os
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
@@ -416,12 +418,26 @@ def report(
     out("=" * 72)
 
 
+@contextmanager
+def private_output(path: str, *, newline=None):
+    fd, temporary = tempfile.mkstemp(prefix=".sandbox-export-", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w", newline=newline) as handle:
+            yield handle
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
 def write_csv(path: str, timelines: dict[str, Timeline], episodes: list[PauseEpisode], paused_now: list) -> None:
     listing = {s.sandbox_id: s for s in paused_now}
     by_sandbox: dict[str, list[PauseEpisode]] = defaultdict(list)
     for e in episodes:
         by_sandbox[e.sandbox_id].append(e)
-    with open(path, "w", newline="") as handle:
+    with private_output(path, newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
             [
@@ -472,7 +488,7 @@ def main() -> int:
     parser.add_argument("--csv", help="write one row per sandbox to this CSV file")
     parser.add_argument("--skip-listing", action="store_true", help="do not query the current paused-sandbox listing")
     parser.add_argument("--events-file", help="analyse a saved JSON array of events instead of calling the API")
-    parser.add_argument("--save-events", help="write the fetched events to this JSON file for later re-analysis")
+    parser.add_argument("--save-events", help="save events selected by history limits and metadata to a private JSON file")
     args = parser.parse_args()
 
     try:
@@ -504,10 +520,6 @@ def main() -> int:
             parser.error("E2B_API_KEY is not set (needed to fetch events; not needed with --events-file)")
         print("Fetching lifecycle events...", file=sys.stderr)
         events = fetch_events(api_key, domain, since, max_events)
-    if args.save_events:
-        with open(args.save_events, "w") as handle:
-            json.dump(events, handle)
-
     # Apply the same limits regardless of source: de-duplicate, newest first, then cap.
     events = list({e["id"]: e for e in events if e.get("type") in EVENT_TYPES}.values())
     events.sort(key=lambda e: e["timestamp"], reverse=True)
@@ -516,6 +528,10 @@ def main() -> int:
     cap_reached = bool(max_events) and len(events) >= max_events
     if max_events:
         events = events[:max_events]
+    events = [e for e in events if metadata_matches((e.get("eventData") or {}).get("sandbox_metadata"), args.metadata)]
+    if args.save_events:
+        with private_output(args.save_events) as handle:
+            json.dump(events, handle)
 
     requested = "all available history" if not since and not max_events else ", ".join(
         part for part in [

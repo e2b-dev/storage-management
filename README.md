@@ -17,7 +17,6 @@ Supporting folders:
 | Folder | Contents |
 |---|---|
 | [`tests/`](tests/) | Mirrors the tool folders: `tests/lifecycle_insights/`, `tests/cleanup/`. Offline unit tests (`test_*.py`, no account access) and live harnesses (`validate_*.py`, create and clean up tagged sandboxes). |
-| [`docs/`](docs/) | [`VERIFICATION.md`](docs/VERIFICATION.md): what was verified, how, and known limits. [`implementation-plan.md`](docs/implementation-plan.md): design notes. |
 
 ## Setup
 
@@ -56,11 +55,11 @@ account data.
 ## Packaging a tool for a customer
 
 Each tool folder is self-contained. To hand one over as a zip, include the folder's scripts
-and README plus the root `requirements.txt`:
+and README plus the root `requirements.txt` and `LICENSE`:
 
 ```bash
 rm -rf /tmp/lifecycle_insights && mkdir /tmp/lifecycle_insights \
-  && cp lifecycle_insights/*.py lifecycle_insights/*.sh lifecycle_insights/README.md requirements.txt /tmp/lifecycle_insights/ \
+  && cp lifecycle_insights/*.py lifecycle_insights/*.sh lifecycle_insights/README.md requirements.txt LICENSE /tmp/lifecycle_insights/ \
   && (cd /tmp && zip -r "$OLDPWD/sandbox_lifecycle_insights.zip" lifecycle_insights -x '*.DS_Store')
 ```
 
@@ -80,3 +79,7 @@ a live tagged sandbox (set `LIFECYCLE_ZIP` to test a prebuilt zip instead).
    and, if it touches the account, a `validate_*_e2e.py` that creates only tagged fixtures and
    cleans them up.
 5. Add a row to the Tools table above.
+
+## License
+
+[Apache License 2.0](LICENSE), matching the E2B SDKs.

@@ -111,6 +111,7 @@ def main():
             for name in ('analyze_sandbox_reuse.py', 'analyze_sandbox_reuse_cli.sh', 'README.md'):
                 z.write(ROOT / 'lifecycle_insights' / name, f'lifecycle_insights/{name}')
             z.write(ROOT / 'requirements.txt', 'lifecycle_insights/requirements.txt')
+            z.write(ROOT / 'LICENSE', 'lifecycle_insights/LICENSE')
     data = archive.read_bytes()
     manifest = {'zip_sha256': hashlib.sha256(data).hexdigest(), 'run': RUN,
                 'started_at': datetime.now(timezone.utc).isoformat()}

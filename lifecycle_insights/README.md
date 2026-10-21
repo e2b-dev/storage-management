@@ -34,9 +34,19 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `--metadata k=v,...` | none | Only sandboxes matching every pair. |
 | `--csv file` | none | One row per sandbox. |
 | `--skip-listing` | off | Skip the paused-sandbox inventory. |
-| `--save-events f` / `--events-file f` | none | Save raw events / replay a saved file. |
+| `--save-events f` / `--events-file f` | none | Save selected events / replay a saved JSON array. |
 
 The events feed keeps limited history, so run weekly with `--save-events` and keep the files.
+
+JSON exports contain only the lifecycle events used by the report, after deduplication,
+history limits, and `--metadata` filtering. The event cap applies before metadata filtering.
+Without `--metadata`, the selected history can include every sandbox in the account.
+The same rules apply when exporting a replay from `--events-file`.
+
+JSON and CSV exports contain sandbox identifiers and metadata. Both are written atomically
+with owner-only permissions (`0600`), including when replacing an existing file. Review
+their contents before sharing them. Filtering selects events; it does not redact fields
+within a matching event.
 
 ## How the numbers are made
 
