@@ -4,8 +4,8 @@
 Run with ../.venv/bin/python test_cleanup_safety.py, or from the workspace root:
 v2/.venv/bin/python v2/tests/test_cleanup_safety.py
 
-Failures identify unmet cleanup requirements. The CLI stub is this same file,
-invoked via a temporary executable named e2b. All SDK calls are replaced too.
+Failures identify unmet cleanup requirements. The Python entry point uses an in-memory API double. The shell entry point
+uses a local HTTP server; neither can access an E2B account.
 """
 
 import contextlib
@@ -86,120 +86,143 @@ class Backend:
         raise AssertionError(operation)
 
 
-def fake_cli():
-    path = Path(os.environ["CLEANUP_TEST_STATE"])
-    state = json.loads(path.read_text())
-    backend = Backend(state["config"])
-    backend.calls = state.get("calls", [])
-    backend.snapshot_lists = state.get("snapshot_lists", {})
-    args = sys.argv[2:]
-    operation = {"list": "list", "info": "info", "kill": "kill"}.get(args[1])
-    sid = None if operation == "list" else args[2]
-    if args[1] == "snapshot":
-        operation = {"list": "snapshots", "delete": "delete_snapshot"}[args[2]]
-        sid = args[3]
-    rc = 0
-    try:
-        result = backend.call(operation, sid)
-        if operation == "snapshots":
-            print(json.dumps([{"snapshotId": s} for s in result]))
-        elif operation in ("list", "info"):
-            print(json.dumps(result))
-        elif operation == "kill":
-            print(f"Sandbox {sid} has been killed" if result else f"Sandbox {sid} wasn't found")
-        elif operation == "delete_snapshot":
-            print(f"Snapshot {sid} has been deleted" if result else f"Snapshot {sid} wasn't found")
-    except KeyError:
-        print(f"Sandbox {sid} wasn't found", file=sys.stderr)
-        rc = 1
-    except (RuntimeError, ConnectionError) as error:
-        print(str(error), file=sys.stderr)
-        rc = 1
-    path.write_text(json.dumps(dict(config=backend.config, calls=backend.calls,
-                                   snapshot_lists=backend.snapshot_lists)))
-    return rc
+class FakeAPI:
+    def __init__(self, state):
+        self.state = state
 
+    def list_paused(self, metadata=None):
+        from sandbox_backend import normalize
+        for item in self.state.call('list'):
+            yield normalize(item)
 
-class Paginator:
-    def __init__(self, items, limit):
-        self.items = list(items)
-        self.limit = limit
+    def call(self, op, sid):
+        from sandbox_backend import BackendError, Missing
+        try:
+            return self.state.call(op, sid)
+        except KeyError as error:
+            raise Missing('not found') from error
+        except (RuntimeError, ConnectionError) as error:
+            raise BackendError(str(error)) from error
 
-    @property
-    def has_next(self):
-        return bool(self.items)
+    def get_info(self, sid):
+        from sandbox_backend import normalize
+        return normalize(self.call('info', sid))
 
-    def next_items(self):
-        batch, self.items = self.items[:self.limit], self.items[self.limit:]
-        return batch
+    def kill(self, sid):
+        return self.call('kill', sid)
+
+    def snapshots(self, sid):
+        return list(self.call('snapshots', sid))
+
+    def delete_snapshot(self, sid):
+        return self.call('delete_snapshot', sid)
+
+    def close(self):
+        pass
+
+    def cancel(self):
+        pass
 
 
 def run_python(backend, args):
     args = test_args(backend, args)
-    import e2b
-    from e2b.exceptions import NotFoundException, SandboxException
-    import httpx
-
-    def call(op, sid=None):
-        try:
-            return backend.call(op, sid)
-        except KeyError:
-            raise NotFoundException("not found")
-        except ConnectionError:
-            raise httpx.ConnectError("connection reset")
-        except RuntimeError as error:
-            raise SandboxException(str(error))
-
-    def info(item):
-        return SimpleNamespace(sandbox_id=item["sandboxId"], state=e2b.SandboxState(item["state"]),
-                               started_at=datetime.fromisoformat(item["startedAt"]),
-                               end_at=datetime.fromisoformat(item["endAt"]), metadata=item["metadata"])
-
-    def listing(**kwargs):
-        assert kwargs["order"] == "asc"
-        assert kwargs["query"].state == [e2b.SandboxState.PAUSED]
-        return Paginator(map(info, call("list")), kwargs["limit"])
-
-    fake = SimpleNamespace(
-        list=listing,
-        get_info=lambda sid: info(call("info", sid)),
-        kill=lambda sid: call("kill", sid),
-        list_snapshots=lambda sandbox_id, limit: Paginator(
-            [SimpleNamespace(snapshot_id=s) for s in call("snapshots", sandbox_id)], limit),
-        delete_snapshot=lambda sid: call("delete_snapshot", sid))
     stdout, stderr = io.StringIO(), io.StringIO()
     rc = 0
-    with patch.dict(os.environ, {"E2B_API_KEY": "offline-test-key"}), patch.object(e2b, "Sandbox", fake), patch.object(sys, "argv", ["cleanup"] + args), \
-            patch.object(httpx.Client, "send", side_effect=AssertionError("network forbidden")), \
+    from sandbox_backend import backend as real_backend
+
+    def factory(name, **kwargs):
+        if os.environ.get('E2B_DEBUG', '').lower() == 'true':
+            return real_backend(name, **kwargs)
+        return FakeAPI(backend)
+
+    with patch.dict(os.environ, {"E2B_API_KEY": "offline-test-key"}), \
+            patch('sandbox_backend.backend', factory), \
+            patch.object(sys, 'argv', ['cleanup'] + args), \
             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         try:
-            runpy.run_path(str(ROOT / "cleanup" / "cleanup_paused_sandboxes.py"), run_name="__main__")
+            runpy.run_path(str(ROOT / 'cleanup' / 'cleanup_paused_sandboxes.py'), run_name='__main__')
         except SystemExit as error:
             rc = error.code
-        except Exception as error:
-            rc = 1
-            stderr.write(f"UNHANDLED {type(error).__name__}: {error}")
     return SimpleNamespace(returncode=rc, stdout=stdout.getvalue(), stderr=stderr.getvalue())
 
 
 def run_shell(backend, args):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, unquote, urlparse
+    import threading
     args = test_args(backend, args)
-    with tempfile.TemporaryDirectory() as temp:
-        path = Path(temp)
-        state = path / "state.json"
-        state.write_text(json.dumps(dict(config=backend.config)))
-        executable = path / "e2b"
-        executable.write_text(f"#!{sys.executable}\nimport runpy,sys\nsys.argv = "
-                              f"[{str(Path(__file__).resolve())!r}, '--fake-cli'] + sys.argv[1:]\n"
-                              f"runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')\n")
-        executable.chmod(0o755)
-        env = {k: v for k, v in os.environ.items() if not k.startswith("E2B_")}
-        env.update(PATH=temp + os.pathsep + os.environ["PATH"], CLEANUP_TEST_STATE=str(state), E2B_API_KEY="offline-test-key")
-        proc = subprocess.run(["bash", str(ROOT / "cleanup" / "cleanup_paused_sandboxes_cli.sh"), *args],
+    mutex = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            self.handle_request()
+
+        def do_DELETE(self):
+            self.handle_request()
+
+        def handle_request(self):
+            query = parse_qs(urlparse(self.path).query)
+            path = urlparse(self.path).path
+            status, headers, data = 200, {}, None
+            with mutex:
+                try:
+                    if path == '/v2/sandboxes':
+                        items = backend.call('list')
+                        # Cursor uses an ID, so deleting previous pages cannot shift it.
+                        ids = sorted(items, key=lambda s: (s['startedAt'], s['sandboxId']))
+                        token = query.get('nextToken', [None])[0]
+                        if token:
+                            ids = [s for s in ids if s['startedAt'] > token]
+                        limit = int(query['limit'][0])
+                        data = ids[:limit]
+                        if len(ids) > limit:
+                            headers['X-Next-Token'] = data[-1]['startedAt']
+                    elif path == '/snapshots':
+                        items = backend.call('snapshots', query['sandboxID'][0])
+                        offset = int(query.get('nextToken', ['0'])[0])
+                        limit = int(query['limit'][0])
+                        data = [{'snapshotID': sid} for sid in items[offset:offset + limit]]
+                        if offset + limit < len(items):
+                            headers['X-Next-Token'] = str(offset + limit)
+                    elif path.startswith('/sandboxes/'):
+                        sid = path.rsplit('/', 1)[1]
+                        if self.command == 'GET':
+                            data = backend.call('info', sid)
+                        else:
+                            status = 204 if backend.call('kill', sid) else 404
+                    elif path.startswith('/templates/'):
+                        status = 204 if backend.call('delete_snapshot', unquote(path.rsplit('/', 1)[1])) else 404
+                    else:
+                        status = 404
+                except KeyError:
+                    status = 404
+                except (RuntimeError, ConnectionError):
+                    status = 503
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            if data is not None:
+                self.wfile.write(json.dumps(data).encode())
+
+    server = ThreadingHTTPServer(('127.0.0.1', getattr(backend, 'port', 0)), Handler)
+    backend.port = server.server_port
+    thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+    thread.start()
+    try:
+        env = {k: v for k, v in os.environ.items() if not k.startswith('E2B_')}
+        env.update(E2B_API_KEY='offline-test-key', E2B_API_URL=f'http://127.0.0.1:{server.server_port}',
+                   E2B_TOOLS_PYTHON=sys.executable)
+        return subprocess.run(['bash', str(ROOT / 'cleanup' / 'cleanup_paused_sandboxes_cli.sh'),
+                               *args, '--rate', '10000', '--retries', '0'],
                               capture_output=True, text=True, env=env, timeout=30)
-        saved = json.loads(state.read_text())
-        backend.config, backend.calls = saved["config"], saved.get("calls", [])
-        return proc
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_args(backend, args):
@@ -207,8 +230,8 @@ def test_args(backend, args):
     if not hasattr(backend, "journal_temp"):
         backend.journal_temp = tempfile.TemporaryDirectory()
     args += ["--journal", str(Path(backend.journal_temp.name) / "journal.json")]
-    if "--apply" in args and not backend.config.get("omit_resume_guard"):
-        args += ["--resumes-stopped"]
+    if "--apply" in args and not backend.config.get("omit_recheck"):
+        args += ["--recheck"]
     return args
 
 
@@ -372,12 +395,13 @@ class CleanupSafety(unittest.TestCase):
         self.assertIn('E2B_DEBUG', result.stderr)
         self.assertFalse(b.calls)
 
-    def test_apply_requires_resumes_stopped_before_any_kill(self):
-        self.each(dict(sandboxes=[sandbox("old")], resume_at_kill=["old"], omit_resume_guard=True), ["--apply"],
-                  lambda b, p: (self.assertEqual(p.returncode, 2), self.assertIn("resumes-stopped", p.stderr), self.assertFalse(b.calls)))
+    def test_apply_without_resume_assertion_uses_listed_state(self):
+        def verify(b, p):
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn(['kill', 'old'], b.calls)
+            self.assertFalse(any(op == 'info' for op, _ in b.calls))
+        self.each(dict(sandboxes=[sandbox('old')], omit_recheck=True), ['--apply'], verify)
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--fake-cli"]:
-        sys.exit(fake_cli())
     unittest.main(verbosity=2)

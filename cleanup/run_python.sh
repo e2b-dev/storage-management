@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared launcher: prefer the v2 virtualenv; allow an explicit interpreter override.
+# Shared launcher: prefer the repository virtualenv; allow an explicit interpreter override.
 set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 python_bin="${E2B_TOOLS_PYTHON:-}"
