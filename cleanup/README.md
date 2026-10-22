@@ -17,20 +17,23 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 export E2B_API_KEY=your_key
 
-# Preview paused sandboxes last started/resumed more than 72 hours ago.
-.venv/bin/python cleanup/cleanup_paused_sandboxes.py --days 3 --age-from started
+# Preview sandboxes that have been paused (unused) for more than 72 hours.
+.venv/bin/python cleanup/cleanup_paused_sandboxes.py --days 3
 
-# Delete directly; no prior dry run or resume-exclusion assertion is required.
-.venv/bin/python cleanup/cleanup_paused_sandboxes.py --days 3 --age-from started --apply
+# Delete directly; no prior dry run is required.
+.venv/bin/python cleanup/cleanup_paused_sandboxes.py --days 3 --apply
 
 # Same operation through the shell entry point, limited to one workload.
-bash cleanup/cleanup_paused_sandboxes_cli.sh --days 3 --age-from started --metadata env=dev --apply
+bash cleanup/cleanup_paused_sandboxes_cli.sh --days 3 --metadata env=dev --apply
 ```
 
-`--age-from started` measures from the latest start/resume, including initial creation for a
-sandbox that has never resumed. It can select a sandbox paused recently after a long run.
-`--age-from paused` measures continuous pause age. Running sandboxes are excluded in both modes.
-The cutoff is fixed when the run starts and the comparison is strictly older than that cutoff.
+The default, `--age-from paused`, measures time since the sandbox was last paused, which is the
+time it was last used. This is the standard retention policy ("delete anything untouched for N
+days"). `--age-from started` instead measures from the latest start/resume, including initial
+creation for a sandbox that has never resumed; it can select a sandbox that was paused recently
+after a long run, so use it only when you specifically want start-based retention. Running
+sandboxes are excluded in both modes. The cutoff is fixed when the run starts and the comparison
+is strictly older than that cutoff.
 
 ## Request budgets and streaming
 
@@ -49,10 +52,15 @@ permission failures stop further requests. Exhausted per-resource failures are l
 run continues with other resources; listing failures stop discovery and return a nonzero exit.
 
 The normal path holds one page and at most `--concurrency` deletes in flight. It uses the listed
-state and timestamps and makes **no per-sandbox GETs**. With `--age-from started`, it stops listing
-at the first timestamp at or beyond the cutoff. Pause-based retention must scan every page
-because the API orders by start time, not pause time. `--limit` bounds the number of matching
-sandboxes processed per run. A rerun discovers the remaining resources anew.
+state and timestamps and makes **no per-sandbox GETs** unless `--recheck` is set. The API orders
+by start time, not pause time, so the default pause-based retention scans every page of paused
+sandboxes (one GET per 100 sandboxes). With `--age-from started`, listing stops at the first
+timestamp at or beyond the cutoff. `--limit` bounds the number of matching sandboxes processed
+per run. A rerun discovers the remaining resources anew.
+
+A listing row the tool cannot interpret (unknown state, missing or malformed timestamp) is
+logged to stderr and skipped; the other sandboxes on the page are still processed and the run
+exits nonzero so the skip is visible to cron monitoring.
 
 ## Cron
 
@@ -67,8 +75,13 @@ source /opt/storage-management/cleanup.env
 set +a
 exec /opt/storage-management/.venv/bin/python \
   /opt/storage-management/cleanup/cleanup_paused_sandboxes.py \
-  --days 3 --age-from started --apply --rate 15 --limit 10000
+  --days 3 --apply --recheck --rate 15 --limit 10000
 ```
+
+`--recheck` re-reads each sandbox immediately before its delete and skips it if it has been
+resumed since it was listed. It costs one extra GET per deletion and is optional: with multi-day
+retention windows the chance that a sandbox is resumed in the seconds between listing and
+deletion is very low, so drop it if request budget matters more than closing that gap.
 
 Keep the API key in `cleanup.env`, restrict that file to its owner, and schedule:
 
@@ -104,7 +117,9 @@ Monitor nonzero exits and rotate the log. An hourly job enforces retention on an
 ## Deletion semantics
 
 The default cron path acts on the page's observed state. A sandbox resumed after it was listed
-can be killed. `--recheck` narrows that interval but cannot make checking and deletion atomic.
+can be killed, because the API has no conditional delete and killing a resumed sandbox also
+removes its pause snapshot. `--recheck` narrows that interval to the gap between one GET and the
+DELETE but cannot make checking and deletion atomic.
 Use application-level resume coordination if that race is unacceptable. The legacy
 `--resumes-stopped` flag remains accepted for existing commands and does not create a lock.
 
@@ -116,7 +131,8 @@ interruption; requests already in flight can finish.
 ## Optional named-snapshot cleanup
 
 A named snapshot is a separate resource that outlives its source sandbox. It is touched only with
-`--delete-snapshots`. This mode processes parents sequentially, rechecking state, age, metadata
+`--delete-snapshots`. The API identifies a named snapshot as `team-slug/name:tag` (or
+`templateID:tag` when it has no name); both forms are accepted and deleted. This mode processes parents sequentially, rechecking state, age, metadata
 and timestamps around snapshot enumeration. It uses the same request budget as normal cleanup.
 
 Before killing a parent, the tool durably records its timestamps and snapshot IDs. Reruns can

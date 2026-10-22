@@ -226,8 +226,75 @@ class Streaming(unittest.TestCase):
         self.assertEqual(api.snapshots('old'), ['snapshot:default'])
         self.assertTrue(api.delete_snapshot('snapshot:default'))
         self.assertEqual(paths[-1], b'/templates/snapshot%3Adefault')
-        with self.assertRaises(BackendError):
-            snapshot_identifier('../other')
+        for bad in ('../other', 'a/b/c', 'team/../x', 'team/name:tag:extra', '', 'name/'):
+            with self.assertRaises(BackendError, msg=bad):
+                snapshot_identifier(bad)
+
+    def test_named_snapshots_use_namespaced_ids_and_are_deleted_with_their_parent(self):
+        # The API reports a named snapshot as "team-slug/alias:tag"; an older release rejected the slash
+        # before the kill, so the parent sandbox was never deleted and every cron run exited nonzero.
+        import tempfile
+        requests = []
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(days=10)).isoformat()
+        row = {'sandboxID': 'parent', 'state': 'paused', 'metadata': {}, 'startedAt': old, 'endAt': old}
+
+        def handler(request):
+            requests.append((request.method, request.url.raw_path.decode()))
+            if request.method == 'DELETE':
+                return httpx.Response(204)
+            if request.url.path == '/v2/sandboxes':
+                return httpx.Response(200, json=[row])
+            if request.url.path == '/sandboxes/parent':
+                return httpx.Response(200, json=row)
+            self.assertEqual(request.url.path, '/snapshots')
+            return httpx.Response(200, json=[
+                {'snapshotID': 'my-team/my-snapshot:default', 'names': ['my-team/my-snapshot:default']},
+                {'snapshotID': 'abc123:v1.2', 'names': []},
+            ])
+
+        api = self.api(handler)
+        with tempfile.TemporaryDirectory() as temp:
+            args = cleanup.parser_for_cli().parse_args(['--days', '3', '--delete-snapshots', '--apply', '--journal', f'{temp}/journal.json'])
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                result = cleanup.run(args, api, now - timedelta(days=3))
+        self.assertEqual(result, 0, out.getvalue())
+        self.assertIn('Deleted paused sandbox parent', out.getvalue())
+        deletes = [path for method, path in requests if method == 'DELETE']
+        self.assertEqual(deletes, ['/sandboxes/parent', '/templates/my-team%2Fmy-snapshot%3Adefault', '/templates/abc123%3Av1.2'])
+
+    def test_unreadable_listing_rows_are_logged_and_skipped_without_aborting_the_run(self):
+        import contextlib
+        import io
+        now = datetime.now(timezone.utc)
+        page = [resource('good-one'), {'sandboxID': 'bad-state', 'state': 'hibernating', 'metadata': {},
+                                       'startedAt': resource()['startedAt'], 'endAt': resource()['endAt']},
+                {'sandboxID': 'bad-time', 'state': 'paused', 'startedAt': 'yesterday', 'endAt': resource()['endAt']},
+                'not-an-object', resource('good-two')]
+        killed = []
+
+        def handler(request):
+            if request.method == 'DELETE':
+                killed.append(request.url.path)
+                return httpx.Response(204)
+            return httpx.Response(200, json=page)
+
+        api = self.api(handler)
+        args = cleanup.parser_for_cli().parse_args(['--days', '3', '--apply', '--concurrency', '1'])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = cleanup.run_sandboxes(args, api, now - timedelta(days=3))
+        self.assertEqual(killed, ['/sandboxes/good-one', '/sandboxes/good-two'])
+        self.assertEqual(api.invalid_rows, 3)
+        self.assertEqual(result, 1, 'unreadable rows must surface through the exit code for cron monitoring')
+        self.assertIn("Skipped unreadable listing row 'bad-state'", err.getvalue())
+        self.assertIn("Skipped unreadable listing row 'bad-time'", err.getvalue())
+        self.assertIn("Skipped unreadable listing row None", err.getvalue())
+        self.assertIn('Skipped 3 unreadable listing row(s)', err.getvalue())
+        self.assertIn('Deleted 2 of 2', out.getvalue())
 
     def test_metadata_encoding_matches_the_sdk_and_invalid_pages_fail(self):
         from urllib.parse import quote, urlencode

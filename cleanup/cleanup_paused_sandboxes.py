@@ -51,6 +51,13 @@ def selected_rows(args, api, cutoff):
             yield info
 
 
+def report_invalid_rows(api):
+    count = getattr(api, 'invalid_rows', 0)
+    if count:
+        print(f'Skipped {count} unreadable listing row(s); see earlier messages. Other sandboxes were processed.', file=sys.stderr, flush=True)
+    return count
+
+
 def run_sandboxes(args, api, cutoff):
     total = deleted = skipped = failed = 0
 
@@ -108,7 +115,7 @@ def run_sandboxes(args, api, cutoff):
         print(f'Deleted {deleted} of {total} matching/pending paused sandbox(es); skipped {skipped}, failed {failed}.')
     else:
         print(f'Dry run: {total} paused sandbox(es) matched/pending. Re-run with --apply to delete.')
-    return 1 if failed else 0
+    return 1 if failed or report_invalid_rows(api) else 0
 
 
 def run(args, api, cutoff):
@@ -227,7 +234,7 @@ def run(args, api, cutoff):
                 print(f'Deleted {snapshots_deleted} named snapshot(s); {len(pending)} pending sandbox record(s).')
         else:
             print(f'Dry run: {total} paused sandbox(es) matched/pending; failed {failed}. Re-run with --apply to delete.')
-        return 1 if failed else 0
+        return 1 if failed or report_invalid_rows(api) else 0
 
 
 def main(argv=None):

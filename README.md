@@ -10,7 +10,7 @@ Tools are read-only or dry-run by default.
 | Folder | Question it answers | Mutates? | Docs |
 |---|---|---|---|
 | [`lifecycle_insights/`](lifecycle_insights/) | After a sandbox is paused, how often and how long after does anyone resume it? Use it to size the impact of a retention change. | No, read-only | [README](lifecycle_insights/README.md) |
-| [`cleanup/`](cleanup/) | Stream paused sandboxes older than N days and delete them under a shared request budget; suitable for cron. Named snapshots are optional. | Dry run by default; `--apply` deletes | [README](cleanup/README.md) |
+| [`cleanup/`](cleanup/) | Stream sandboxes that have been paused (unused) for more than N days and delete them under a shared request budget; suitable for cron. Named snapshots are optional. | Dry run by default; `--apply` deletes | [README](cleanup/README.md) |
 
 Supporting folders:
 

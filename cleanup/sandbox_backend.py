@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import math
 import os
 import re
+import sys
 from types import SimpleNamespace
 from urllib.parse import quote, urlencode, urlparse
 
@@ -55,7 +56,8 @@ def identifier(value):
 
 
 def snapshot_identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)?', value):
+    # The API reports a named snapshot as "namespace/alias:tag" and an unnamed one as "templateID:tag".
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?(?::[A-Za-z0-9_.-]+)?', value):
         raise BackendError(f'invalid snapshot ID: {value!r}')
     return value
 
@@ -87,6 +89,7 @@ class APIBackend:
                                           follow_redirects=False)
         self.control = RequestControl(rate, retries)
         self.page_size = page_size
+        self.invalid_rows = 0
 
     def close(self):
         self.client.close()
@@ -120,7 +123,15 @@ class APIBackend:
             params['metadata'] = urlencode({quote(k): quote(v) for k, v in metadata.items()})
         for page in self.pages('/v2/sandboxes', params):
             for item in page:
-                yield normalize(item)
+                try:
+                    info = normalize(item)
+                except BackendError as error:
+                    # One unreadable row must not abort a cron run; log it and keep streaming.
+                    self.invalid_rows += 1
+                    sid = (item.get('sandboxID') or item.get('sandboxId')) if isinstance(item, dict) else None
+                    print(f'Skipped unreadable listing row {sid!r}: {error}', file=sys.stderr, flush=True)
+                    continue
+                yield info
 
     def get_info(self, sid):
         response = self.control.request(self.client, 'GET', f'/sandboxes/{identifier(sid)}')
