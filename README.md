@@ -2,15 +2,15 @@
 
 Scripts for E2B customers to understand and manage what their sandboxes keep in storage:
 paused sandboxes, their snapshots, and how those are used over time. Each tool lives in its
-own folder with a README, ships as both a Python SDK script and an E2B CLI script that produce
-the same output, and is safe by default (read-only, or dry run unless told otherwise).
+own folder with a README and Python and shell entry points that produce the same output.
+Tools are read-only or dry-run by default.
 
 ## Tools
 
 | Folder | Question it answers | Mutates? | Docs |
 |---|---|---|---|
 | [`lifecycle_insights/`](lifecycle_insights/) | After a sandbox is paused, how often and how long after does anyone resume it? Use it to size the impact of a retention change. | No, read-only | [README](lifecycle_insights/README.md) |
-| [`cleanup/`](cleanup/) | Which paused sandboxes (and their named snapshots) are older than N days, and delete them once resumes are stopped. | Dry run by default; `--apply` deletes | [README](cleanup/README.md) |
+| [`cleanup/`](cleanup/) | Stream sandboxes that have been paused (unused) for more than N days and delete them under a shared request budget; suitable for cron. Named snapshots are optional. | Dry run by default; `--apply` deletes | [README](cleanup/README.md) |
 
 Supporting folders:
 
@@ -20,7 +20,8 @@ Supporting folders:
 
 ## Setup
 
-Python 3.11 or newer. The shell entry points need `curl`, `jq`, and the `e2b` CLI.
+Python 3.11 or newer. The lifecycle-analysis shell entry point also needs `curl`, `jq`,
+and the `e2b` CLI. Cleanup uses a shared HTTP client in both entry points.
 
 ```bash
 python3 -m venv .venv
@@ -28,7 +29,7 @@ python3 -m venv .venv
 export E2B_API_KEY=your_key
 ```
 
-Verified with E2B SDK 2.50.0 and E2B CLI 2.17.1.
+The lifecycle tools support E2B SDK 2.50.0 or newer. See each tool's README for its runtime and verification requirements.
 
 ## Quick start
 
@@ -70,9 +71,9 @@ a live tagged sandbox (set `LIFECYCLE_ZIP` to test a prebuilt zip instead).
 
 1. Create a folder named after the question it answers, with a `README.md` covering run
    commands, a flag table, and how to read the output.
-2. Provide a Python SDK entry point and a CLI entry point with identical output. Keep the
+2. Provide Python and shell entry points with identical output. Keep the
    Python script as the behaviour owner and make the shell script a thin launcher, as
-   `cleanup/` does, or a full parallel implementation with a parity test, as
+   `cleanup/` does, or a parallel implementation with a parity test, as
    `lifecycle_insights/` does.
 3. Default to read-only or dry run. Anything that deletes must require an explicit flag.
 4. Add a matching `tests/<tool>/` folder with an empty `__init__.py`, offline `test_*.py` files,
