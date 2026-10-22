@@ -141,3 +141,17 @@ Run offline tests from the repository root:
 both entry points with one-resource pages, and deletes only its own fixtures. It validates age
 selection, a recent resume, dry runs, bounded apply, named-snapshot cleanup and running-sandbox
 preservation. It is an opt-in live test, not a million-resource benchmark.
+
+For a larger live streaming check, run:
+
+```bash
+.venv/bin/python tests/cleanup/validate_streaming_e2e.py --count 150 --page-size 25
+```
+
+This creates 150 paused sandboxes and two controls in the connected account, then runs real
+`--apply` cleanup with a unique metadata filter and `--days 0` so fresh fixtures qualify.
+It checks that deletion begins after the first page and before the last page is requested,
+records HTTP timing and status codes at the default 20 requests/second budget, and verifies
+that all selected sandboxes are gone while the controls survive. A `finally` block removes
+the fixtures, including on failure. The printed evidence directory contains a fixture manifest
+and a JSON report. This validates real pagination and deletion, not million-resource throughput.
