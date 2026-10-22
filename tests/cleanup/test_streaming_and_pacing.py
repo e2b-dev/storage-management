@@ -119,6 +119,39 @@ class Pacing(unittest.TestCase):
         controller.wait()
         self.assertGreaterEqual(clock.time(), 102)
 
+    def test_new_shared_cooldown_delays_a_worker_already_waiting_for_a_slot(self):
+        clock = Clock()
+        waiting, release = threading.Event(), threading.Event()
+
+        def sleep(delay):
+            if not waiting.is_set():
+                waiting.set()
+                if not release.wait(2):
+                    raise AssertionError('test did not release waiting worker')
+            clock.sleep(delay)
+
+        controller = RequestControl(clock=clock.time, sleep=sleep)
+        controller.wait()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(controller.wait)
+            try:
+                self.assertTrue(waiting.wait(2))
+                controller.defer(2)
+            finally:
+                release.set()
+            future.result(timeout=2)
+        self.assertGreaterEqual(clock.time(), 102)
+        self.assertEqual(controller.attempts, 2)
+
+    def test_cancellation_wakes_workers_during_long_pacing_waits(self):
+        controller = RequestControl(rate=0.1)
+        controller.wait()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(controller.wait)
+            controller.cancelled.set()
+            with self.assertRaisesRegex(BackendError, 'stopped'):
+                future.result(timeout=1)
+
 
 class Streaming(unittest.TestCase):
     def setUp(self):
